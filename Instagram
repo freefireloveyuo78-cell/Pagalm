@@ -1,0 +1,113 @@
+import os
+import glob
+import shutil
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import yt_dlp
+
+# ============== CONFIGURATION ==============
+BOT_TOKEN = "8548004694:AAFpUtR9lcYFdPwKxJOUJDnImyIwulDTkek"
+# ===========================================
+
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# 1. Cinematic /start Command
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    welcome_text = (
+        "🌟 **Welcome to Universal Media Downloader Bot** 🎬\n\n"
+        "✨ *Main aapki madad kar sakta hoon in platforms se videos download karne mein:*\n"
+        "• 📸 **Instagram** (Reels & Posts)\n"
+        "• 📺 **YouTube** (Videos & Shorts)\n"
+        "• 📘 **Facebook** (Videos)\n"
+        "• 🐦 **Twitter / X** (Clips)\n\n"
+        "🚀 **Kaise Use Karein?**\n"
+        "Bas kisi bhi video ka link yahan paste karke bhejiye, aur magic dekhiye! 👇"
+    )
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("✨ Developer Support", url="https://t.me/"))
+    bot.reply_to(message, welcome_text, parse_mode="Markdown", reply_markup=markup)
+
+# 2. Link Handler (Publicly working for all users without login)
+@bot.message_handler(func=lambda message: True)
+def download_media(message):
+    url = message.text.strip()
+    chat_id = message.chat.id
+
+    # Check if text looks like a URL
+    if not url.startswith("http"):
+        bot.reply_to(message, "❌ **Oops!** Kripya ek valid video link bhejiye. 🔍", parse_mode="Markdown")
+        return
+
+    status_msg = bot.reply_to(message, "🔍 *Analyzing link and fetching media stream...* ⏳", parse_mode="Markdown")
+    
+    # Unique temporary folder for user chat
+    target_folder = f"downloads_{chat_id}"
+    if os.path.exists(target_folder):
+        shutil.rmtree(target_folder)
+    os.makedirs(target_folder)
+
+    # yt-dlp options configuration
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'outtmpl': os.path.join(target_folder, '%(id)s.%(ext)s'),
+        'noplaylist': True,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Extract info and download
+            info_dict = ydl.extract_info(url, download=True)
+            video_title = info_dict.get('title', 'Downloaded Video')
+            
+        # Downloaded file dhundhein
+        video_files = glob.glob(os.path.join(target_folder, "*.*"))
+        
+        if video_files:
+            video_path = video_files[0]
+            file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+
+            # Agar file size Telegram ki limit (50MB free bot limit) se zyada ho
+            if file_size_mb > 50:
+                bot.edit_message_text(
+                    "⚠️ **Error:** Yeh video bahut bada hai (>50MB). Bot ki limit se bahar hai.", 
+                    chat_id=chat_id, message_id=status_msg.message_id, parse_mode="Markdown"
+                )
+                shutil.rmtree(target_folder)
+                return
+
+            bot.edit_message_text("🚀 *Uploading video to Telegram...* ⏳", chat_id=chat_id, message_id=status_msg.message_id, parse_mode="Markdown")
+            
+            # Send chat action
+            bot.send_chat_action(chat_id, 'upload_video')
+
+            # Send video to user
+            with open(video_path, "rb") as video_file:
+                caption = (
+                    f"✨ **Title:** {video_title[:50]}...\n"
+                    f"📦 **Size:** `~{file_size_mb:.2f} MB`\n"
+                    f"🎬 *Downloaded successfully via Universal Bot.*"
+                )
+                bot.send_video(
+                    chat_id, 
+                    video_file, 
+                    caption=caption, 
+                    parse_mode="Markdown"
+                )
+
+            # Delete status message
+            bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
+        else:
+            bot.edit_message_text("❌ **Error:** Video file download nahi ho payi. Dobara koshish karein.", chat_id=chat_id, message_id=status_msg.message_id, parse_mode="Markdown")
+
+    except Exception as e:
+        bot.edit_message_text(f"⚠️ **Download Failed:**\n`{e}`\n\n*(Link invalid ho sakta hai ya platform ne block kiya hai)*", chat_id=chat_id, message_id=status_msg.message_id, parse_mode="Markdown")
+
+    finally:
+        # Clean up storage
+        if os.path.exists(target_folder):
+            shutil.rmtree(target_folder)
+
+print("🤖 Universal Media Downloader Bot is live and public...")
+bot.infinity_polling()
